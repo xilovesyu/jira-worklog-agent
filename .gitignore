@@ -1,40 +1,77 @@
-# Environment files (contain secrets)
+# Environment files (contain secrets - NEVER commit)
 .env
 *.env.local
+.env.*.local
 
-# Config (user-specific, copied from config.yaml)
-# config.yaml is kept as template
+# Config (user-specific)
+# config.yaml is kept as template, but user may modify it
+# If user creates local config, ignore it
+config.local.yaml
 
-# Data directory
+# Data directory (SQLite database, user data)
 data/
 
 # Logs
 logs/
 *.log
+npm-debug.log*
 
 # Build outputs
 dist/
 ui/dist/
+build/
 
 # Dependencies
 node_modules/
 ui/node_modules/
 
-# IDE
+# IDE / Editor
 .vscode/
 .idea/
+*.swp
+*.swo
+*~
 
 # OS files
 .DS_Store
 Thumbs.db
+ehthumbs.db
+Desktop.ini
 
 # Test coverage
 coverage/
+.nyc_output/
 
-# SQLite database
+# SQLite database files
 *.db
 *.db-journal
+*.sqlite
+*.sqlite3
 
 # Temporary files
 *.tmp
 *.temp
+*.bak
+*.cache
+
+# Package files (generated)
+*.exe
+*.msi
+*.dmg
+*.deb
+*.rpm
+
+# Lock files sometimes cause issues, but we keep them
+# package-lock.json
+# ui/package-lock.json
+
+# Claude project settings (local only)
+.claude/settings.local.json
+.claude/memory/
+.claude/worktrees/
+
+# Certificates and keys (never commit)
+*.pem
+*.key
+*.crt
+*.p12
