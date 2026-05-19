@@ -1,0 +1,47 @@
+# Global timezone for date operations (affects worklog submission date)
+# Options: "local" (use system TZ), "Asia/Shanghai", "America/Los_Angeles", etc.
+timezone: "local"
+
+jira:
+  server: "${JIRA_SERVER}"
+  api_token: "${JIRA_API_TOKEN}"
+  # Jira server timezone (for worklog date matching)
+  # Common values: "America/Los_Angeles" (PDT), "Asia/Shanghai" (CST)
+  server_timezone: "America/Los_Angeles"
+
+scheduler:
+  trigger_time: "17:00"
+  timezone: "Asia/Shanghai"
+  reminder_interval: 5  # 重复提醒间隔（分钟）
+  enabled: true  # 启用定时提醒
+
+worklog:
+  default_hours: 8
+  preselect_count: 3
+  default_comment: "Daily work"
+
+smart_selector:
+  recent_days: 7
+  max_tickets: 10
+
+llm:
+  provider: "openai"
+  model: "${OPENAI_MODEL}"
+  base_url: "${OPENAI_BASE_URL}"
+  api_key_env: "OPENAI_API_KEY"
+  max_tokens: 1024
+  temperature: 0.3
+  enabled: true
+
+ai:
+  automation_level: "semi"
+  confidence_threshold: 85
+  auto_submit_time: "17:30"
+  notify_before_submit: true
+
+api:
+  port: "${API_PORT}"
+
+ui:
+  port: "${UI_PORT}"
+  auto_open: false

@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run *)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git filter-branch *)",
+      "Bash(git checkout *)",
+      "Bash(git rm *)",
+      "Bash(git branch *)",
+      "Bash(git remote *)",
+      "Bash(git push *)",
+      "PowerShell(gh auth *)",
+      "Bash(rm -rf .git)",
+      "Bash(git init *)"
+    ]
+  },
+  "enabledMcpjsonServers": [
+    "mcp-atlassian",
+    "GitLab"
+  ]
+}

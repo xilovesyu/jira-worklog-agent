@@ -1,0 +1,40 @@
+# Environment files (contain secrets)
+.env
+*.env.local
+
+# Config (user-specific, copied from config.yaml)
+# config.yaml is kept as template
+
+# Data directory
+data/
+
+# Logs
+logs/
+*.log
+
+# Build outputs
+dist/
+ui/dist/
+
+# Dependencies
+node_modules/
+ui/node_modules/
+
+# IDE
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Test coverage
+coverage/
+
+# SQLite database
+*.db
+*.db-journal
+
+# Temporary files
+*.tmp
+*.temp
