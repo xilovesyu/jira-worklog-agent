@@ -46,6 +46,6 @@
     "concurrently": "^8.2.2",
     "esbuild": "^0.28.0",
     "pkg": "^5.8.1",
-    "vitest": "^4.1.5"
+    "vitest": "^4.1.7"
   }
 }
