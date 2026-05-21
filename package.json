@@ -19,8 +19,8 @@
     "build:copy-dist-local": "node scripts/install.mjs",
     "build:ui": "npm run build --prefix ui",
     "build:embed-wasm": "node scripts/embed-wasm.mjs",
-    "build:bundle": "esbuild src/index.mjs --bundle --platform=node --outfile=dist/bundle.js --format=cjs --target=node20 --external:node-notifier",
-    "build:pkg": "pkg dist/bundle.js --targets node20-win-x64 --output dist/jira-worklog-agent.exe --compress GZip",
+    "build:bundle": "esbuild src/index.mjs --bundle --platform=node --outfile=dist/bundle.js --format=cjs --target=node18 --external:node-notifier",
+    "build:pkg": "pkg dist/bundle.js --targets node18-win-x64 --output dist/jira-worklog-agent.exe --compress GZip",
     "build:copy-to-dist": "node scripts/release.mjs"
   },
   "pkg": {
