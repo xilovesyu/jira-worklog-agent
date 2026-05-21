@@ -37,14 +37,18 @@ jobs:
         with:
           node-version: '20'
 
-      # Use npm install instead of npm ci to get platform-specific native bindings
-      # package-lock.json was generated on Windows, but CI runs on Linux
-      # rolldown (vitest dependency) needs Linux native bindings
+      # npm's optionalDependencies bug: package-lock.json from Windows
+      # doesn't contain Linux native bindings (@rolldown/binding-linux-x64-gnu)
+      # Must delete lock file and let npm re-resolve for current platform
       - name: Install backend dependencies
-        run: npm install
+        run: |
+          rm -f package-lock.json
+          npm install
 
       - name: Install frontend dependencies
-        run: npm install --prefix ui
+        run: |
+          rm -f ui/package-lock.json
+          npm install --prefix ui
 
       - name: Run backend tests
         run: npm test
@@ -83,7 +87,9 @@ jobs:
           node-version: '20'
 
       - name: Install frontend dependencies
-        run: npm install --prefix ui
+        run: |
+          rm -f ui/package-lock.json
+          npm install --prefix ui
 
       - name: TypeScript type check
         run: cd ui && npx tsc --noEmit
