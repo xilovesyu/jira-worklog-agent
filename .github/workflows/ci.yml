@@ -85,7 +85,7 @@ jobs:
         run: npm ci --prefix ui
 
       - name: TypeScript type check
-        run: npx tsc --noEmit --project ui/tsconfig.json
+        run: cd ui && npx tsc --noEmit
 
   # Summary job (optional - for branch protection rules)
   ci-passed:
