@@ -1,0 +1,29 @@
+name: Dependabot Auto-update
+
+on:
+  schedule:
+    - cron: '0 6 * * 1'  # Monday 6am UTC
+  workflow_dispatch:
+
+jobs:
+  dependabot:
+    name: Dependabot Update
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run Dependabot
+        uses: dependabot/fetch-metadata@v2
+        id: dependabot-metadata
+
+      - name: Enable auto-merge for Dependabot PRs
+        run: |
+          gh pr merge --auto --squash "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,111 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # 1. Secret leak detection
+  secret-scan:
+    name: Secret Leak Detection
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history for better detection
+
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # 2. Build and Test
+  build-and-test:
+    name: Build & Test
+    runs-on: ubuntu-latest
+    needs: secret-scan  # Run after secret scan passes
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Install backend dependencies
+        run: npm ci
+
+      - name: Install frontend dependencies
+        run: npm ci --prefix ui
+
+      - name: Run backend tests
+        run: npm test
+
+      - name: Run frontend tests
+        run: npm test --prefix ui
+
+      - name: Build frontend
+        run: npm run build:ui
+
+      - name: Build backend bundle
+        run: npm run build:bundle
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-artifacts
+          path: |
+            dist/
+            ui/dist/
+          retention-days: 7
+
+  # 3. TypeScript check (frontend)
+  typecheck:
+    name: TypeScript Check
+    runs-on: ubuntu-latest
+    needs: secret-scan
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Install frontend dependencies
+        run: npm ci --prefix ui
+
+      - name: TypeScript type check
+        run: npx tsc --noEmit --project ui/tsconfig.json
+
+  # Summary job (optional - for branch protection rules)
+  ci-passed:
+    name: CI Passed
+    runs-on: ubuntu-latest
+    needs: [secret-scan, build-and-test, typecheck]
+    if: always()
+    steps:
+      - name: Check all jobs passed
+        run: |
+          if [[ "${{ needs.secret-scan.result }}" != "success" ]]; then
+            echo "Secret scan failed"
+            exit 1
+          fi
+          if [[ "${{ needs.build-and-test.result }}" != "success" ]]; then
+            echo "Build and test failed"
+            exit 1
+          fi
+          if [[ "${{ needs.typecheck.result }}" != "success" ]]; then
+            echo "Type check failed"
+            exit 1
+          fi
+          echo "All CI checks passed!"
