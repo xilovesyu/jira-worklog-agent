@@ -39,10 +39,13 @@ jobs:
           cache: 'npm'
 
       - name: Install backend dependencies
-        run: npm ci
+        run: npm ci --include=optional
+
+      - name: Rebuild native dependencies
+        run: npm rebuild
 
       - name: Install frontend dependencies
-        run: npm ci --prefix ui
+        run: npm ci --include=optional --prefix ui
 
       - name: Run backend tests
         run: npm test
@@ -82,7 +85,7 @@ jobs:
           cache: 'npm'
 
       - name: Install frontend dependencies
-        run: npm ci --prefix ui
+        run: npm ci --include=optional --prefix ui
 
       - name: TypeScript type check
         run: cd ui && npx tsc --noEmit

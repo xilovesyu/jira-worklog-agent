@@ -27,10 +27,10 @@ jobs:
           cache: 'npm'
 
       - name: Install backend dependencies
-        run: npm ci
+        run: npm ci --include=optional
 
       - name: Install frontend dependencies
-        run: npm ci --prefix ui
+        run: npm ci --include=optional --prefix ui
 
       - name: Build full application
         run: npm run build
