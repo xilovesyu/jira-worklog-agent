@@ -38,22 +38,31 @@ function BugWorklogModal({ isOpen, bugs, allocation, onConfirm, onCancel }: Prop
   const [choices, setChoices] = useState<Record<string, BugChoice>>({})
   const [loading, setLoading] = useState(true)
 
-  // Fetch subtasks for each bug on mount
+  // Fetch subtasks for each bug on mount (parallel fetch with cleanup)
   useEffect(() => {
     if (!isOpen || bugs.length === 0) return
 
     setLoading(true)
-    const fetchSubtasks = async () => {
-      const results: Record<string, SubtaskInfo[]> = {}
+    const controller = new AbortController()
 
-      for (const bug of bugs) {
+    const fetchSubtasks = async () => {
+      // Parallel fetch all bug subtasks
+      const fetchPromises = bugs.map(async (bug) => {
         try {
-          const response = await fetch(`/api/bug/${bug.key}/subtasks`)
+          const response = await fetch(`/api/bug/${bug.key}/subtasks`, {
+            signal: controller.signal
+          })
           const data = await response.json()
-          results[bug.key] = data.subtasks || []
+          return { bugKey: bug.key, subtasks: data.subtasks || [] }
         } catch {
-          results[bug.key] = []
+          return { bugKey: bug.key, subtasks: [] }
         }
+      })
+
+      const resultsArray = await Promise.all(fetchPromises)
+      const results: Record<string, SubtaskInfo[]> = {}
+      for (const { bugKey, subtasks } of resultsArray) {
+        results[bugKey] = subtasks
       }
 
       setBugSubtasks(results)
@@ -74,6 +83,11 @@ function BugWorklogModal({ isOpen, bugs, allocation, onConfirm, onCancel }: Prop
     }
 
     fetchSubtasks()
+
+    // Cleanup: abort fetch on unmount or modal close
+    return () => {
+      controller.abort()
+    }
   }, [isOpen, bugs, allocation])
 
   if (!isOpen) return null

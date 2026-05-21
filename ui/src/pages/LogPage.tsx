@@ -34,14 +34,16 @@ function LogPage() {
   const safeSelectedDate = safeDate(selectedDate)
   const selectedDateStr = dateToStr(selectedDate)
 
-  // Selection & allocation state (local UI state)
+  // Selection & allocation state (reserved for non-AI mode - currently unused when AI is enabled)
+  // These states are kept for future non-AI fallback if AI recommendation is disabled
   const [selected, setSelected] = useState<string[]>([])
-  // allocation is kept for handleAiEdit/handleSkip, but not directly used elsewhere
   const [_allocation, setAllocation] = useState<Allocation>({})
   const [selectedProjects, setSelectedProjects] = useState<string[]>([])
   const [selectedBacklogAreas, setSelectedBacklogAreas] = useState<string[]>([])
   const [selectedTypes, setSelectedTypes] = useState<string[]>([])
   const [addedTickets, setAddedTickets] = useState<Ticket[]>([])
+  // Key of newly added ticket (to auto-select in AiRecommendationPanel)
+  const [newlyAddedKey, setNewlyAddedKey] = useState<string | null>(null)
 
   // Track if preSelected has been initialized (prevent re-init when user clears selection)
   const preSelectedInitializedRef = useRef(false)
@@ -50,6 +52,9 @@ function LogPage() {
   const [showBugModal, setShowBugModal] = useState(false)
   const [pendingBugs, setPendingBugs] = useState<Ticket[]>([])
   const [pendingAllocation, setPendingAllocation] = useState<Allocation>({})
+
+  // Error notification state
+  const [errorMessage, setErrorMessage] = useState<string | null>(null)
 
   // React Query hooks
   const ticketsQuery = useTickets(selectedDateStr)
@@ -75,13 +80,15 @@ function LogPage() {
   const ticketsData = ticketsQuery.data
   const worklogData = worklogQuery.data
   const allTickets = ticketsData?.tickets || []
-  const filters = ticketsData?.filters || { projects: [], backlogAreas: [], types: [] }
+  // Cache filters to avoid inline object creating new reference each render
+  const filters = useMemo(() => ticketsData?.filters || { projects: [], backlogAreas: [], types: [] }, [ticketsData?.filters])
   const existingWorklog = worklogData?.worklog || []
-  const existingHours = existingWorklog.reduce((sum, w) => sum + (w?.hours || 0), 0)
+  // Use Math.round to avoid floating point precision issues (e.g., 7.5 + 0.5 = 7.999999)
+  const existingHours = Math.round(existingWorklog.reduce((sum, w) => sum + (w?.hours || 0), 0) * 10) / 10
   const isSubmitted = worklogData?.submitted && existingHours > 0
-  const isFullySubmitted = existingHours >= 8
-  const isSupplementMode = isSubmitted && existingHours < 8
-  const targetHours = isSupplementMode ? 8 - existingHours : 8
+  const isFullySubmitted = existingHours >= 7.9 // Allow 7.9+ as "fully submitted" due to precision
+  const isSupplementMode = isSubmitted && existingHours < 7.9
+  const targetHours = isSupplementMode ? Math.max(0.1, 8 - existingHours) : 8 // Ensure targetHours > 0
 
   // Calendar days with records
   const daysWithRecords = useMemo(() => {
@@ -119,30 +126,38 @@ function LogPage() {
   */
 
   // Initialize selection from preSelected when data loads (only once)
-  useMemo(() => {
-    if (!preSelectedInitializedRef.current && !ticketsQuery.isLoading && ticketsData?.preSelected && ticketsData.preSelected.length > 0 && selected.length === 0) {
-      const preSelected = ticketsData.preSelected
-      setSelected(preSelected)
-      setAllocation(calculateAllocation(preSelected, 8))
+  useEffect(() => {
+    // Skip if already initialized, still loading, or no preSelected data
+    if (preSelectedInitializedRef.current) return
+    if (ticketsQuery.isLoading) return
+    if (!ticketsData?.preSelected || ticketsData.preSelected.length === 0) return
+    if (selected.length > 0) return
 
-      // Set default filters
-      const filteredProjects = extractFilteredProjects(filters.projects)
-      const filteredAreas = extractFilteredBacklogAreas(filters.backlogAreas)
-      const allTypes = (filters.types || []).map(t => t?.name).filter(Boolean)
+    const preSelected = ticketsData.preSelected
+    setSelected(preSelected)
+    setAllocation(calculateAllocation(preSelected, 8))
 
-      setSelectedProjects(filteredProjects)
-      setSelectedBacklogAreas(filteredAreas)
-      setSelectedTypes(allTypes)
+    // Set default filters
+    const filteredProjects = extractFilteredProjects(filters.projects)
+    const filteredAreas = extractFilteredBacklogAreas(filters.backlogAreas)
+    const allTypes = (filters.types || []).map(t => t?.name).filter(Boolean)
 
-      // Mark as initialized to prevent re-init when user clears selection
-      preSelectedInitializedRef.current = true
-    }
-  }, [ticketsQuery.isLoading, ticketsData, selected.length, filters])
+    setSelectedProjects(filteredProjects)
+    setSelectedBacklogAreas(filteredAreas)
+    setSelectedTypes(allTypes)
+
+    // Mark as initialized to prevent re-init when user clears selection
+    preSelectedInitializedRef.current = true
+  }, [ticketsQuery.isLoading, ticketsData?.preSelected, selected.length, filters])
 
   // Reset initialization flag and clear added tickets when date changes
   useEffect(() => {
     preSelectedInitializedRef.current = false
     setAddedTickets([])
+    setNewlyAddedKey(null)
+    // Reset AI panel state for new date
+    setAiApproved(false)
+    setShowAiPanel(true)
   }, [selectedDateStr])
 
   // === Commented: handleToggle (now managed by AI panel) ===
@@ -186,37 +201,57 @@ function LogPage() {
   }, [selected, selectedBugs, allocation, selectedDateStr, isSupplementMode, submitMutation])
   */
 
-  // Handle Bug modal confirmation
+  // Handle Bug modal confirmation (parallel subtask creation)
   const handleBugModalConfirm = useCallback(async (choices: Record<string, { target: string; hours: number; closeAfter?: boolean; parentKey?: string; summary?: string }>) => {
     const newAllocation: Allocation = {}
     const failedBugs: string[] = []
 
-    // Build final allocation based on choices
-    for (const [bugKey, choice] of Object.entries(choices)) {
-      if (choice.target === 'new') {
-        // Create new subtask
-        try {
-          const subtaskKey = await createSubtaskMutation.mutateAsync({
-            parentKey: choice.parentKey || bugKey,
-            summary: choice.summary || '[UI Dev] bug fix'
-          })
-          newAllocation[subtaskKey] = choice.hours
-          // Auto close if requested
-          if (choice.closeAfter) {
-            await transitionMutation.mutateAsync({
-              issueKey: subtaskKey,
-              status: 'Closed'
-            })
-          }
-        } catch (err) {
-          // Don't fallback to parent - skip this bug and show error later
-          console.error(`Failed to create subtask for ${bugKey}:`, err)
-          failedBugs.push(bugKey)
-        }
-      } else {
-        newAllocation[choice.target] = choice.hours
+    // Separate choices that need new subtasks vs direct allocation
+    const newSubtaskChoices = Object.entries(choices).filter(([_, choice]) => choice.target === 'new')
+    const directChoices = Object.entries(choices).filter(([_, choice]) => choice.target !== 'new')
+
+    // Add direct allocations first
+    for (const [_bugKey, choice] of directChoices) {
+      newAllocation[choice.target] = choice.hours
+    }
+
+    // Parallel create all new subtasks
+    const createPromises = newSubtaskChoices.map(async ([bugKey, choice]) => {
+      try {
+        const subtaskKey = await createSubtaskMutation.mutateAsync({
+          parentKey: choice.parentKey || bugKey,
+          summary: choice.summary || '[UI Dev] bug fix'
+        })
+        return { bugKey, subtaskKey, hours: choice.hours, closeAfter: choice.closeAfter }
+      } catch (err) {
+        console.error(`Failed to create subtask for ${bugKey}:`, err)
+        failedBugs.push(bugKey)
+        return null
+      }
+    })
+
+    const createdSubtasks = await Promise.all(createPromises)
+
+    // Add created subtasks to allocation
+    for (const result of createdSubtasks) {
+      if (result) {
+        newAllocation[result.subtaskKey] = result.hours
       }
     }
+
+    // Parallel close subtasks that need it
+    const closePromises = createdSubtasks
+      .filter(r => r && r.closeAfter)
+      .map(r => r!.subtaskKey)
+      .map(subtaskKey => transitionMutation.mutateAsync({
+        issueKey: subtaskKey,
+        status: 'Closed'
+      }).catch(err => {
+        console.error(`Failed to close subtask ${subtaskKey}:`, err)
+        // Don't fail the whole operation for close failure
+      }))
+
+    await Promise.all(closePromises)
 
     // Add non-Bug tickets to allocation
     for (const [key, hours] of Object.entries(pendingAllocation)) {
@@ -231,7 +266,7 @@ function LogPage() {
 
     // Show error if any subtask creation failed
     if (failedBugs.length > 0) {
-      alert(`⚠️ 创建 subtask 失败: ${failedBugs.join(', ')}\n这些 ticket 的工作时间未记录。请手动选择其他方式记录。`)
+      setErrorMessage(`创建 subtask 失败: ${failedBugs.join(', ')}，这些 ticket 的工时未记录`)
     }
 
     // Only submit if there's something to submit
@@ -339,12 +374,16 @@ function LogPage() {
       {
         allocation,
         date: selectedDateStr,
-        decisionId: recommendation.id,
+        decisionId: recommendation.id || undefined,
       },
       {
         onSuccess: () => {
           setAiApproved(true)
           setShowAiPanel(false)
+          setErrorMessage(null)
+        },
+        onError: (err: Error) => {
+          setErrorMessage(`提交失败: ${err.message}`)
         },
       }
     )
@@ -352,22 +391,12 @@ function LogPage() {
 
   const handleAddTicket = useCallback(async (input: string) => {
     try {
+      setErrorMessage(null)
       const ticket = await searchMutation.mutateAsync(input)
 
-      // Add to allTickets if not exists
-      if (!allTickets.some(t => t.key === ticket.key)) {
-        // Auto-select filters for this ticket
-        if (ticket.projectKey && !selectedProjects.includes(ticket.projectKey)) {
-          setSelectedProjects([...selectedProjects, ticket.projectKey])
-        }
-        if (ticket.backlogArea && !selectedBacklogAreas.includes(ticket.backlogArea)) {
-          setSelectedBacklogAreas([...selectedBacklogAreas, ticket.backlogArea])
-        }
-        if (ticket.typeName && !selectedTypes.includes(ticket.typeName)) {
-          setSelectedTypes([...selectedTypes, ticket.typeName])
-        }
-
-        // Add to addedTickets so it shows in the list
+      // Add to addedTickets so it shows in the list (if not already in allTickets)
+      const alreadyExists = allTickets.some(t => t.key === ticket.key)
+      if (!alreadyExists) {
         setAddedTickets(prev => {
           if (!prev.some(t => t.key === ticket.key)) {
             return [...prev, ticket]
@@ -376,14 +405,24 @@ function LogPage() {
         })
       }
 
-      // Select the ticket
-      const newSelected = selected.includes(ticket.key) ? selected : [...selected, ticket.key]
-      setSelected(newSelected)
-      setAllocation(calculateAllocation(newSelected, targetHours))
+      // Auto-select filters for this ticket
+      if (ticket.projectKey && !selectedProjects.includes(ticket.projectKey)) {
+        setSelectedProjects([...selectedProjects, ticket.projectKey])
+      }
+      if (ticket.backlogArea && !selectedBacklogAreas.includes(ticket.backlogArea)) {
+        setSelectedBacklogAreas([...selectedBacklogAreas, ticket.backlogArea])
+      }
+      if (ticket.typeName && !selectedTypes.includes(ticket.typeName)) {
+        setSelectedTypes([...selectedTypes, ticket.typeName])
+      }
+
+      // Set newlyAddedKey to trigger auto-selection in AiRecommendationPanel
+      setNewlyAddedKey(ticket.key)
     } catch (err) {
-      console.error(err)
+      const msg = err instanceof Error ? err.message : '搜索失败'
+      setErrorMessage(`添加 ticket 失败: ${msg}`)
     }
-  }, [allTickets, addedTickets, selected, selectedProjects, selectedBacklogAreas, selectedTypes, targetHours, searchMutation])
+  }, [allTickets, selectedProjects, selectedBacklogAreas, selectedTypes, searchMutation])
 
   // === Commented: newAllocationTotal (now managed by AI panel) ===
   // const newAllocationTotal = Object.values(allocation).reduce((a, b) => a + b, 0)
@@ -495,6 +534,14 @@ function LogPage() {
         <span className="selected-date">{formatDate(selectedDate)}</span>
       </header>
 
+      {/* Error notification */}
+      {errorMessage && (
+        <div className="error-notification">
+          <span className="error-message">❌ {errorMessage}</span>
+          <button className="error-close" onClick={() => setErrorMessage(null)}>×</button>
+        </div>
+      )}
+
       <SupplementSection
         submittedTickets={submittedTickets}
         submittedHours={existingHours}
@@ -511,6 +558,8 @@ function LogPage() {
             filters={filters}
             allTickets={allTickets}
             addedTickets={addedTickets}
+            newlyAddedKey={newlyAddedKey}
+            onNewlyAddedKeyConsumed={() => setNewlyAddedKey(null)}
             selectedProjects={selectedProjects}
             selectedBacklogAreas={selectedBacklogAreas}
             selectedTypes={selectedTypes}

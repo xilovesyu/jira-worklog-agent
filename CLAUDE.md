@@ -226,3 +226,152 @@ Output: `dist/jira-worklog-agent.exe` + `dist/ui/` + `dist/config.yaml`
 - Data stored in `%APPDATA%/jira-worklog-agent/data/` on Windows
 - Timezone handling is critical for worklog date matching
 - Jira Server timezone may differ from local timezone
+
+---
+
+## AI修改规则 (Critical - 必须遵守)
+
+> **目的**: 减少AI理解复杂度，避免跨文件连锁影响
+
+### 修改 `storage.mjs` 时
+
+必须检查影响:
+
+- [ ] `worklog_history` 表 → 影响历史查询、昨日分配
+- [ ] `ai_config` 表 → 影响AI自动化配置
+- [ ] `ai_decision_history` 表 → 影响决策历史
+- [ ] `llm_call_log` 表 → 影响成本统计
+- [ ] 函数调用方 (见下方依赖矩阵)
+
+**高风险函数**:
+- `getAiConfig()` → 被 `intelligentDecision.mjs`, `routes/ai.mjs` 调用
+- `saveAiDecision()` → 被 `intelligentDecision.mjs` 调用
+- `recordWorklog()` → 被 `routes/worklog.mjs` 调用
+
+### 修改 `intelligentDecision.mjs` 时
+
+必须确认:
+
+- [ ] `generateAiRecommendation()` 返回结构 → 前端 `AiRecommendation` 类型
+- [ ] `executeAiRecommendation()` 调用 → `jiraClient.addWorklog()`
+- [ ] 证据收集 → `evidenceCollector.mjs` 接口
+- [ ] LLM调用 → `decisionMaker.mjs` 接口
+
+**返回结构必须包含**:
+```typescript
+{
+  enabled: boolean,
+  tickets: AiRecommendationTicket[],  // 必须有 key, summary, status
+  recommendation?: { tickets, allocation },
+  explanation: string,
+  confidence_level: 'high'|'medium'|'low'
+}
+```
+
+### 修改 `jiraClient.mjs` 时
+
+必须确认:
+
+- [ ] `searchMyTickets()` JQL → 影响 `/api/tickets`
+- [ ] `batchGetTicketDetails()` → 影响AI推荐
+- [ ] `addWorklog()` → 影响工时提交
+- [ ] 返回结构 → 前端 `Ticket` 类型匹配
+
+### 修改前端类型时
+
+必须同步:
+
+- [ ] 后端返回结构 (`intelligentDecision.mjs`, `routes/*.mjs`)
+- [ ] API响应结构 (`ui/src/api/queries.ts`)
+- [ ] UI渲染逻辑 (`AiRecommendationPanel.tsx`, `TicketList.tsx`)
+
+---
+
+## 模块依赖矩阵
+
+| 模块 | 被谁调用 | 调用谁 | 破坏性影响范围 |
+|------|---------|--------|---------------|
+| `storage.mjs` | routes/*, intelligentDecision | sql.js | 全系统 |
+| `intelligentDecision.mjs` | routes/ai.mjs | storage, jiraClient, evidenceCollector, decisionMaker | AI推荐全链路 |
+| `jiraClient.mjs` | routes/*, intelligentDecision, smartSelector | axios → Jira API | 工时提交、ticket查询 |
+| `evidenceCollector.mjs` | intelligentDecision | jiraClient | AI证据收集 |
+| `decisionMaker.mjs` | intelligentDecision | llmEngine | LLM决策 |
+| `llmEngine.mjs` | decisionMaker | OpenAI SDK | LLM调用 |
+
+**调用链**: `routes/ai.mjs` → `intelligentDecision` → `evidenceCollector` → `jiraClient` → Jira API
+
+---
+
+## 状态转换规则
+
+### LogPage 状态机
+
+| 当前状态 | 触发条件 | 目标状态 | 副作用 |
+|---------|---------|---------|--------|
+| INIT | 页面加载/日期变化 | LOADING | 重置所有本地状态 |
+| LOADING | API成功 | READY | 初始化selectedKeys, editedAllocation |
+| LOADING | API失败 | ERROR | 显示错误信息 |
+| READY | 用户修改allocation | EDITING | 更新editedAllocation |
+| READY | 用户点击提交 | SUBMITTED | 调用submit API |
+| SUBMITTED | 提交成功且工时≥8h | COMPLETE | 显示成功提示 |
+| SUBMITTED | 提交失败 | ERROR | 显示错误信息 |
+
+**关键规则**:
+- 日期变化时 **必须** 重置 `initializedDateRef.current = null`
+- AI推荐加载时 **只初始化一次** selectedKeys/editedAllocation
+- 使用 `initializedDateRef` 防止 React 严格模式下的双重调用
+
+### AiRecommendationPanel 状态
+
+| 状态 | 用户行为 | 下一个状态 |
+|-----|---------|----------|
+| RECOMMENDED | 点击ticket tag | VIEWING (展开详情) |
+| RECOMMENDED | 修改hours dropdown | MODIFIED |
+| MODIFIED | 点击提交 | SUBMITTING |
+| SUBMITTING | 提交成功 | APPROVED |
+
+### 工时模式判断
+
+```javascript
+const existingHours = existingWorklog.reduce((sum, w) => sum + w.hours, 0)
+const targetHours = existingHours === 0 ? 8 : 8 - existingHours
+// 0h → 新记录模式 (target=8)
+// 0<h<8 → 补充模式 (target=8-existing)
+// ≥8h → 已完成，无需操作
+```
+
+---
+
+## 数据契约 (API → 前端)
+
+**关键**: 后端返回结构必须与前端 TypeScript 类型完全匹配
+
+### `/api/tickets` → `TicketsResponse`
+
+```typescript
+interface TicketsResponse {
+  tickets: Ticket[]      // 可选tickets
+  preSelected: string[]  // 预选keys
+  allocation: Allocation // 时间分配
+  yesterday: Allocation | null
+  filters: Filters       // 必须包含 projects, backlogAreas, types
+}
+```
+
+### `/api/ai/recommendation` → `AiRecommendation`
+
+```typescript
+interface AiRecommendation {
+  enabled: boolean
+  tickets: AiRecommendationTicket[]  // 必须包含 projectKey, backlogArea
+  recommendation?: { tickets: string[], allocation: Allocation }
+  explanation: string
+  confidence_level: 'high'|'medium'|'low'
+  existingWorklog?: WorklogEntry[]
+  existingTotalHours?: number
+}
+```
+
+**常见错误**:
+- 后端返回 `project_key` 但前端类型是 `projectKey` → 字段丢失
+- 后端缺少 `filters` → 前端 FiltersSection 空白

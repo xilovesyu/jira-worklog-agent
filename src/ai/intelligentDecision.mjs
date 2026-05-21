@@ -2,7 +2,7 @@ import { saveAiDecision, saveTicketEvidence, getAiConfig, getYesterdayAllocation
 import { getTodayDate, getYesterdayDate } from '../utils.mjs'
 import { getLlmConfig } from './llmEngine.mjs'
 import { aggregateEvidence } from './confidenceCalculator.mjs'
-import { batchGetTicketDetails } from '../jiraClient.mjs'
+import { batchGetTicketDetails, getCustomFields } from '../jiraClient.mjs'
 import { collectEvidence, enrichTicketsWithEvidence, prepareEvidenceSummary } from './evidenceCollector.mjs'
 import { makeDecisionWithLlm, filterBugParentTasks, fallbackRecommendation, getLlmProviderInfo } from './decisionMaker.mjs'
 
@@ -30,6 +30,10 @@ export async function generateAiRecommendation(dateStr = null) {
   }
 
   try {
+    // Get custom field IDs for backlog area
+    const customFields = await getCustomFields()
+    const backlogAreaFieldId = customFields.backlogAreaId
+
     // Step 1: Collect all evidence
     const evidence = await collectEvidence(date)
 
@@ -51,7 +55,7 @@ export async function generateAiRecommendation(dateStr = null) {
     }
 
     // Step 4: Batch fetch ticket details (much faster than searchMyTickets)
-    const ticketDetails = await batchGetTicketDetails(candidateKeys)
+    const ticketDetails = await batchGetTicketDetails(candidateKeys, backlogAreaFieldId)
 
     // Step 5: Combine details with aggregated evidence
     const enrichedTickets = enrichTicketsWithEvidence(ticketDetails, aggregatedEvidence)
@@ -96,6 +100,8 @@ export async function generateAiRecommendation(dateStr = null) {
         status: t.status || 'Unknown',
         description: t.description || null,
         typeName: t.typeName || 'Unknown',
+        projectKey: t.projectKey || null,
+        backlogArea: t.backlogArea || null,
         isSubtask: t.isSubtask || false,
         parentKey: t.parentKey || null,
         parentSummary: t.parentSummary || '',

@@ -29,7 +29,7 @@ function TicketList({ tickets, selected, onToggle, jiraServer, displayOnly, edit
           jiraServer={jiraServer}
           displayOnly={displayOnly}
           editableHours={editableHours}
-          hours={allocation?.[ticket.key] || ticket.hours || 0}
+          hours={allocation?.[ticket.key] ?? ticket.hours ?? 0}
           onHoursChange={onHoursChange}
         />
       ))}

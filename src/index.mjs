@@ -199,56 +199,77 @@ async function main() {
   // Register API routes
   registerApiRoutes(app)
 
-  // Serve static UI files
-  // UI files are in APPDATA directory (same as exe, config, notifier)
-  const uiDistPath = path.join(USER_DATA_DIR, 'ui')
-
-  if (fs.existsSync(uiDistPath)) {
-    app.use(express.static(uiDistPath))
-    console.log(`✅ UI static files served from: ${uiDistPath}`)
-
-    // SPA fallback - read and send index.html directly
-    app.get('*', (req, res, next) => {
-      if (req.path.startsWith('/api')) {
-        return next()
-      }
-      try {
-        const indexPath = path.join(uiDistPath, 'index.html')
-        const indexContent = fs.readFileSync(indexPath, 'utf8')
-        res.setHeader('Content-Type', 'text/html')
-        res.send(indexContent)
-      } catch (err) {
-        console.error('Error reading index.html:', err.message)
-        res.status(404).send('UI not found')
-      }
-    })
-  } else if (!process.pkg) {
-    // Dev mode fallback: try dist/ui
-    const devUiPath = path.join(getBaseDir(), 'dist', 'ui')
-    if (fs.existsSync(devUiPath)) {
-      app.use(express.static(devUiPath))
-      console.log(`✅ UI static files served from: ${devUiPath}`)
-      app.get('*', (req, res, next) => {
-        if (req.path.startsWith('/api')) return next()
-        res.sendFile(path.join(devUiPath, 'index.html'))
-      })
-    } else {
-      console.log('⚠️  UI files not found. Run "npm run build:ui" first.')
-    }
-  } else {
-    console.log('⚠️  UI files not found. Please ensure ui/ directory exists.')
-  }
-
+  // ========== Static UI Serving ==========
+  // CRITICAL: Development vs Production mode distinction
+  //
+  // Development (process.pkg is undefined):
+  //   - Port 7301: API ONLY (no static UI)
+  //   - Port 7302: Vite dev server with hot reload (run separately: cd ui && npm run dev)
+  //
+  // Production (process.pkg is defined - bundled exe):
+  //   - Port 7301: API + Static UI (single port for everything)
+  //
   const port = config.api?.port || 7301
   const uiPort = config.ui?.port || 7302
-  app.listen(port, () => {
-    console.log(`✅ Server running at http://localhost:${port}`)
-    if (!process.pkg) {
-      console.log('')
-      console.log('📍 Dev mode: Run "cd ui && npm run dev" for hot reload')
+  // Production mode: either bundled (process.pkg) or explicitly set via env
+  const isProduction = !!process.pkg || process.env.PRODUCTION_MODE === 'true'
+
+  if (isProduction) {
+    // ========== PRODUCTION MODE ==========
+    // Serve static UI from the same port as API (single-port deployment)
+    const uiDistPath = path.join(USER_DATA_DIR, 'ui')
+
+    if (fs.existsSync(uiDistPath)) {
+      app.use(express.static(uiDistPath))
+      console.log(`✅ UI static files served from: ${uiDistPath}`)
+
+      // SPA fallback - all non-API routes return index.html
+      app.get('*', (req, res, next) => {
+        if (req.path.startsWith('/api')) return next()
+        try {
+          const indexPath = path.join(uiDistPath, 'index.html')
+          res.sendFile(indexPath)
+        } catch (err) {
+          res.status(404).send('UI not found')
+        }
+      })
+    } else {
+      console.log('⚠️  UI files not found. Please ensure ui/ directory exists.')
     }
-    console.log('📍 Open UI: http://localhost:' + (process.pkg ? port : uiPort))
-  })
+
+    app.listen(port, () => {
+      console.log(`✅ Server running at http://localhost:${port}`)
+      console.log(`📍 Open UI: http://localhost:${port}`)
+    })
+  } else {
+    // ========== DEVELOPMENT MODE ==========
+    // API server only on port 7301
+    // Frontend dev server (Vite) runs separately on port 7302
+    //
+    // DO NOT serve static UI here - it conflicts with Vite and causes confusion
+    // If you want to test production build locally, use: npm run build && npm run start:prod
+
+    // API 404 handler for development
+    app.use((req, res) => {
+      if (!req.path.startsWith('/api')) {
+        res.status(404).json({
+          error: 'API endpoint not found',
+          hint: 'In dev mode, UI runs on Vite. Access http://localhost:' + uiPort
+        })
+      }
+    })
+
+    app.listen(port, () => {
+      console.log(`✅ API server running at http://localhost:${port}`)
+      console.log('')
+      console.log('🔧 Development Mode')
+      console.log('   API endpoint:   http://localhost:' + port)
+      console.log('   Frontend (Vite): http://localhost:' + uiPort)
+      console.log('')
+      console.log('   To start Vite:  cd ui && npm run dev')
+      console.log('   To test prod:   npm run build && npm run start:prod')
+    })
+  }
 }
 
 main().catch(err => {

@@ -524,6 +524,8 @@ export async function createSubtask(parentKey, summary) {
     // Get current user info for assignee
     const myselfResponse = await api.get('/rest/api/2/myself')
     const currentAccountId = myselfResponse.data.accountId
+    const currentUserKey = myselfResponse.data.key
+    const currentUserName = myselfResponse.data.name || currentUserKey
 
     // Get parent issue to extract project key and required fields
     const parentResponse = await api.get(`/rest/api/2/issue/${parentKey}`, {
@@ -548,19 +550,24 @@ export async function createSubtask(parentKey, summary) {
     }
 
     console.log(`Using subtask issue type: ${subtaskType.name} (id: ${subtaskType.id})`)
-    console.log(`Assigning subtask to current user: ${currentAccountId}`)
+    console.log(`Assigning subtask to current user: ${currentAccountId || currentUserName}`)
     if (teamField) {
       console.log(`Inheriting TEAM field from parent:`, teamField)
     }
 
     // Create subtask using the correct issue type, assign to self, inherit required fields
+    // Jira Cloud uses accountId, Jira Server/DC uses name
+    const assignee = currentAccountId
+      ? { accountId: currentAccountId }
+      : { name: currentUserName }
+
     const payload = {
       fields: {
         project: { key: projectKey },
         summary: summary,
         issuetype: { id: subtaskType.id },  // Use ID for reliability
         parent: { key: parentKey },
-        assignee: { accountId: currentAccountId }  // Assign to current user
+        assignee: assignee  // Assign to current user
       }
     }
 
@@ -612,9 +619,10 @@ export async function createSubtask(parentKey, summary) {
  * Batch get ticket details by keys
  * More efficient than searchMyTickets when we know specific tickets
  * @param ticketKeys - Array of Jira issue keys (e.g., ['PROJ-123', 'CAP-456'])
+ * @param backlogAreaFieldId - Optional custom field ID for Backlog Area
  * @returns Array of tickets with key, summary, status
  */
-export async function batchGetTicketDetails(ticketKeys) {
+export async function batchGetTicketDetails(ticketKeys, backlogAreaFieldId = null) {
   if (!ticketKeys || ticketKeys.length === 0) {
     return []
   }
@@ -623,6 +631,12 @@ export async function batchGetTicketDetails(ticketKeys) {
 
   // Build JQL: key in (KEY-1, KEY-2, ...)
   const jql = `key in (${ticketKeys.map(k => `"${k}"`).join(',')})`
+
+  // Build fields list
+  let fieldsList = 'summary,status,updated,assignee,description,parent,issuetype,project'
+  if (backlogAreaFieldId) {
+    fieldsList += ',' + backlogAreaFieldId
+  }
 
   try {
     // Get current user for assignee comparison
@@ -633,7 +647,7 @@ export async function batchGetTicketDetails(ticketKeys) {
     const response = await api.get('/rest/api/2/search', {
       params: {
         jql: jql,
-        fields: 'summary,status,updated,assignee,description,parent,issuetype,project',
+        fields: fieldsList,
         maxResults: 50
       }
     })
@@ -653,7 +667,7 @@ export async function batchGetTicketDetails(ticketKeys) {
     // Fetch parent details if there are subtasks
     let parentDetails = {}
     if (subtaskParentKeys.size > 0) {
-      parentDetails = await batchFetchParentDetails(api, Array.from(subtaskParentKeys))
+      parentDetails = await batchFetchParentDetails(api, Array.from(subtaskParentKeys), backlogAreaFieldId)
     }
 
     return response.data.issues.map(issue => {
@@ -681,6 +695,12 @@ export async function batchGetTicketDetails(ticketKeys) {
       const issueType = issue.fields.issuetype
       const isSubtask = !!parentKey
 
+      // Extract backlog area
+      let backlogArea = null
+      if (backlogAreaFieldId && issue.fields[backlogAreaFieldId]) {
+        backlogArea = extractBacklogArea(issue.fields[backlogAreaFieldId])
+      }
+
       return {
         key: issue.key,
         summary: issue.fields.summary,
@@ -695,7 +715,8 @@ export async function batchGetTicketDetails(ticketKeys) {
         parentDescription: parentDescription || null,
         parentTypeName: parentInfo?.typeName || null,
         typeName: issueType?.name || 'Unknown',
-        projectKey: issue.fields.project?.key || ''
+        projectKey: issue.fields.project?.key || '',
+        backlogArea: backlogArea
       }
     })
   } catch (err) {

@@ -118,6 +118,8 @@ export interface AiRecommendationTicket {
   status: string
   description?: string | null
   typeName?: string
+  projectKey?: string | null
+  backlogArea?: string | null
   isSubtask?: boolean
   parentKey?: string | null
   parentSummary?: string

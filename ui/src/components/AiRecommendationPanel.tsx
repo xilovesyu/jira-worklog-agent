@@ -10,6 +10,8 @@ interface Props {
   filters: Filters
   allTickets: Ticket[] // All available tickets for filtering
   addedTickets: Ticket[] // Tickets added via search
+  newlyAddedKey?: string | null // Key of newly added ticket to auto-select
+  onNewlyAddedKeyConsumed?: () => void // Callback to reset newlyAddedKey after consumption
   selectedProjects: string[]
   selectedBacklogAreas: string[]
   selectedTypes: string[]
@@ -39,6 +41,8 @@ export function AiRecommendationPanel({
   filters,
   allTickets,
   addedTickets,
+  newlyAddedKey,
+  onNewlyAddedKeyConsumed,
   selectedProjects,
   selectedBacklogAreas,
   selectedTypes,
@@ -77,22 +81,25 @@ export function AiRecommendationPanel({
 
   // Ref to track if we've initialized for the current date (prevents race conditions)
   const initializedDateRef = useRef<string | null>(null)
+  // Track previous date to detect date changes
+  const prevDateRef = useRef<string>(date)
 
-  // Reset state when date changes - MUST happen before any initialization
+  // Combined effect: reset on date change + initialize from recommendation
+  // This avoids race conditions between separate reset and init effects
   useEffect(() => {
-    // Mark as not initialized for this date
-    initializedDateRef.current = null
-    setEditedAllocation(null)
-    setSelectedKeys(null)
-    setShowAvailable(false)
-  }, [date])
+    // Check if date changed
+    const dateChanged = prevDateRef.current !== date
 
-  // Initialize from AI recommendation ONLY when:
-  // 1. Recommendation exists with allocation
-  // 2. We haven't initialized for this date yet (checked via ref, not state)
-  // 3. Current editedAllocation is null (user hasn't started editing yet)
-  // 4. NOT loading - prevents using stale placeholder data during refetch
-  useEffect(() => {
+    if (dateChanged) {
+      // Reset state when date changes
+      initializedDateRef.current = null
+      setEditedAllocation(null)
+      setSelectedKeys(null)
+      setShowAvailable(false)
+      prevDateRef.current = date
+    }
+
+    // Initialize from AI recommendation if conditions met
     const rec = recommendation?.recommendation
     const canInitialize = !loading
       && rec?.allocation
@@ -107,7 +114,20 @@ export function AiRecommendationPanel({
       // Mark as initialized for this date
       initializedDateRef.current = date
     }
-  }, [recommendation, editedAllocation, date, loading])
+  }, [date, recommendation?.recommendation, editedAllocation, loading])
+
+  // Auto-select newly added ticket (from handleAddTicket)
+  useEffect(() => {
+    if (newlyAddedKey && selectedKeys && !selectedKeys.includes(newlyAddedKey)) {
+      setSelectedKeys([...selectedKeys, newlyAddedKey])
+      setEditedAllocation(prev => ({
+        ...prev,
+        [newlyAddedKey]: 1
+      }))
+      // Reset newlyAddedKey in parent after consumption
+      onNewlyAddedKeyConsumed?.()
+    }
+  }, [newlyAddedKey, selectedKeys, onNewlyAddedKeyConsumed])
 
   // Current allocation to use
   const currentAllocation = editedAllocation || recommendation?.recommendation?.allocation || {}
@@ -159,6 +179,9 @@ export function AiRecommendationPanel({
         parentKey: t.parentKey || undefined,
         parentSummary: t.parentSummary || undefined,
         parentDescription: t.parentDescription || undefined,
+        typeName: t.typeName || undefined,
+        projectKey: t.projectKey || undefined,
+        backlogArea: t.backlogArea || undefined,
         // User's own activity actions (for sorting)
         activityActions: t.activityActions || [],
       })
@@ -183,6 +206,51 @@ export function AiRecommendationPanel({
       return true
     })
   }, [allAvailableTickets, selectedProjects, selectedBacklogAreas, selectedTypes])
+
+  // Build filters dynamically from available tickets (in case filters prop is empty)
+  const dynamicFilters: Filters = useMemo(() => {
+    // Use provided filters if available
+    if (filters.projects?.length > 0) {
+      return filters
+    }
+
+    // Otherwise build from allAvailableTickets and allTickets
+    const combined = [...allAvailableTickets, ...allTickets]
+    const projectsMap = new Map<string, { key: string; name: string }>()
+    const backlogAreasSet = new Set<string>()
+    const typesMap = new Map<string, { name: string; isSubtask?: boolean }>()
+
+    for (const t of combined) {
+      if (t.projectKey) {
+        const existing = projectsMap.get(t.projectKey)
+        if (!existing) {
+          // Try to get project name from allTickets
+          const ticketWithName = allTickets.find(at => at.projectKey === t.projectKey && at.projectName)
+          projectsMap.set(t.projectKey, {
+            key: t.projectKey,
+            name: ticketWithName?.projectName || t.projectKey
+          })
+        }
+      }
+      if (t.backlogArea) {
+        backlogAreasSet.add(t.backlogArea)
+      }
+      if (t.typeName) {
+        if (!typesMap.has(t.typeName)) {
+          typesMap.set(t.typeName, {
+            name: t.typeName,
+            isSubtask: t.isSubtask
+          })
+        }
+      }
+    }
+
+    return {
+      projects: Array.from(projectsMap.values()),
+      backlogAreas: Array.from(backlogAreasSet),
+      types: Array.from(typesMap.values())
+    }
+  }, [filters, allAvailableTickets, allTickets])
 
   // ALL selected tickets (for tags display - NOT filtered)
   const allSelectedTickets: Ticket[] = useMemo(() => {
@@ -359,7 +427,7 @@ export function AiRecommendationPanel({
       {/* Filters section - before tickets */}
       <div className="ai-filters-section">
         <FiltersSection
-          filters={filters}
+          filters={dynamicFilters}
           selectedProjects={selectedProjects}
           selectedBacklogAreas={selectedBacklogAreas}
           selectedTypes={selectedTypes}

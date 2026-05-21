@@ -20,7 +20,11 @@ function FiltersSection({
   onBacklogAreasChange,
   onTypesChange
 }: Props) {
-  if ((filters.projects?.length || 0) === 0) return null
+  // Only return null if ALL filters are empty
+  const hasProjects = (filters.projects?.length || 0) > 0
+  const hasBacklogAreas = (filters.backlogAreas?.length || 0) > 0
+  const hasTypes = (filters.types?.length || 0) > 0
+  if (!hasProjects && !hasBacklogAreas && !hasTypes) return null
 
   const uniqueProjects = [...new Map(filters.projects.map(p => [p.key, p])).values()]
   const uniqueBacklogAreas = [...new Set(filters.backlogAreas || [])].map(area => ({ name: area }))
