@@ -36,16 +36,15 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
 
+      # Use npm install instead of npm ci to get platform-specific native bindings
+      # package-lock.json was generated on Windows, but CI runs on Linux
+      # rolldown (vitest dependency) needs Linux native bindings
       - name: Install backend dependencies
-        run: npm ci --include=optional
-
-      - name: Rebuild native dependencies
-        run: npm rebuild
+        run: npm install
 
       - name: Install frontend dependencies
-        run: npm ci --include=optional --prefix ui
+        run: npm install --prefix ui
 
       - name: Run backend tests
         run: npm test
@@ -82,10 +81,9 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
 
       - name: Install frontend dependencies
-        run: npm ci --include=optional --prefix ui
+        run: npm install --prefix ui
 
       - name: TypeScript type check
         run: cd ui && npx tsc --noEmit
